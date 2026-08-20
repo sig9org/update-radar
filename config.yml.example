@@ -1,0 +1,99 @@
+settings:
+  debug: false
+  github_tokoen: "YOUR_GITHUB_TOKEN"
+  headless: false
+  separate: false
+  silent: false
+  threads: 1
+  timeout: 45s
+  user-agent: ""
+
+profiles:
+  profile1:
+    notifications:
+      proxy: ""
+      discord:
+        destination: ""
+        mention: []
+      email:
+        smtp_host: "smtp.example.com"
+        smtp_port: 587
+        smtp_username: ""
+        smtp_password: ""
+        from: ""
+        to: []
+        cc: []
+        bcc: []
+      slack:
+        destination: ""
+        token: ""
+        channel: ""
+        mention: []
+      teams:
+        destination: ""
+        mention:
+          - "foo@example.com"
+          - "bar@example.com"
+      webex:
+        token: ""
+        destination: ""
+        mention:
+          - "foo@example.com"
+          - "bar@example.com"
+    cisco:
+      - name: "APIC (Application Policy Infrastructure Controller)"
+        url: "https://software.cisco.com/download/home/285968390/type/286278832/release/"
+      - name: "ASAv (Secure Firewall ASA Virtual)"
+        url: "https://software.cisco.com/download/home/286119613/type/280775065/release/"
+
+  profile2:
+    notifications:
+      proxy: ""
+      discord:
+        destination: ""
+        mention: []
+      email:
+        smtp_host: "smtp.example.com"
+        smtp_port: 587
+        smtp_username: ""
+        smtp_password: ""
+        from: ""
+        to: []
+        cc: []
+        bcc: []
+      slack:
+        destination: ""
+        token: ""
+        channel: ""
+        mention: []
+      teams:
+        destination: ""
+        mention:
+          - "foo@example.com"
+          - "bar@example.com"
+      webex:
+        token: ""
+        destination: ""
+        mention:
+          - "foo@example.com"
+          - "bar@example.com"
+    github:
+      - name: "WordPress"
+        url: "https://github.com/WordPress/WordPress"
+        check_releases: false
+        check_tags: true
+      - name: "Zensical"
+        url: "https://github.com/zensical/zensical"
+        check_releases: true
+        check_tags: false
+    web:
+      - name: "Nginx"
+        check: "https://nginx.org/en/CHANGES"
+      - name: "Ubuntu Cloud Images 22.04 LTS Daily Build (Jammy)"
+        check: "https://cloud-images.ubuntu.com/jammy/"
+      - name: "Ubuntu Cloud Images 24.04 LTS Daily Build (Noble)"
+        check: "https://cloud-images.ubuntu.com/noble/"
+      - name: "Ubuntu Cloud Images 26.04 LTS Daily Build (Resolute)"
+        check: "https://cloud-images.ubuntu.com/resolute/"
+      - name: "Wireshark"
+        check: "https://www.wireshark.org/docs/relnotes/"
