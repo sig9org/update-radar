@@ -15,13 +15,15 @@ func TestComputeFirstRun(t *testing.T) {
 }
 
 func TestComputeAddedAndRemoved(t *testing.T) {
-	old := model.Snapshot{Suggested: []string{"1.0"}, Latest: []string{"1.0", "0.9"}}
-	current := model.Snapshot{Suggested: []string{"1.1"}, Latest: []string{"1.1", "1.0"}}
+	old := model.Snapshot{Suggested: []string{"1.0"}, Latest: []string{"1.0", "0.9"}, Deferred: []string{"0.8"}}
+	current := model.Snapshot{Suggested: []string{"1.1"}, Latest: []string{"1.1", "1.0"}, Deferred: []string{"0.9"}}
 	got := Compute(model.Site{}, &old, current)
 	if !reflect.DeepEqual(got.Suggested.Added, []string{"1.1"}) ||
 		!reflect.DeepEqual(got.Suggested.Removed, []string{"1.0"}) ||
 		!reflect.DeepEqual(got.Latest.Added, []string{"1.1"}) ||
-		!reflect.DeepEqual(got.Latest.Removed, []string{"0.9"}) {
+		!reflect.DeepEqual(got.Latest.Removed, []string{"0.9"}) ||
+		!reflect.DeepEqual(got.Deferred.Added, []string{"0.9"}) ||
+		!reflect.DeepEqual(got.Deferred.Removed, []string{"0.8"}) {
 		t.Fatalf("unexpected diff: %#v", got)
 	}
 }

@@ -18,6 +18,7 @@ func Compute(site model.Site, previous *model.Snapshot, current model.Snapshot) 
 	}
 	result.Suggested = section(previous.Suggested, current.Suggested)
 	result.Latest = section(previous.Latest, current.Latest)
+	result.Deferred = section(previous.Deferred, current.Deferred)
 	return result
 }
 

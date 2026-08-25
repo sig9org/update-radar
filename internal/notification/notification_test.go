@@ -40,6 +40,7 @@ func TestMessageFormatsTeamsFriendlyNestedList(t *testing.T) {
 		},
 		Suggested: model.SectionDiff{Added: []string{"2.10.0"}, Removed: []string{"2.9.0"}},
 		Latest:    model.SectionDiff{Added: []string{"2.10.0"}},
+		Deferred:  model.SectionDiff{Added: []string{"2.8.0"}},
 	}, time.Time{})
 	want := "**Cisco Modeling Labs**\n" +
 		"- Suggested Release:\n" +
@@ -47,6 +48,8 @@ func TestMessageFormatsTeamsFriendlyNestedList(t *testing.T) {
 		"  - Removed: 2.9.0\n" +
 		"- Latest Release:\n" +
 		"  - Added: 2.10.0\n" +
+		"- Deferred Release:\n" +
+		"  - Added: 2.8.0\n" +
 		"- Download page:\n" +
 		"  - https://software.cisco.com/download/home/286193282/type/286326381/release/"
 	if message.Body != want {

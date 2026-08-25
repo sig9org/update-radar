@@ -55,6 +55,22 @@ An empty `Targets` slice checks all configured categories. Embedded checks do
 not send notifications; they return an aggregate result and persist state by
 default.
 
+To retrieve current observations directly, use the public fetch functions:
+
+```go
+cisco, err := radar.FetchCisco(ctx, radar.CiscoSite{
+    Name: "APIC",
+    URL:  "https://software.cisco.com/download/home/285968390/type/286278832/release/",
+}, radar.CiscoOptions{Headless: true})
+// cisco.Suggested, cisco.Latest, and cisco.Deferred include expanded child releases.
+
+github, err := radar.FetchGitHub(ctx, "https://github.com/owner/repository", radar.GitHubOptions{})
+web, err := radar.FetchWeb(ctx, "https://example.com/", radar.WebOptions{})
+```
+
+`FetchGitHub` returns the latest release and tag when both checks are enabled
+(the default). `FetchWeb` returns the SHA-256 digest of the response body.
+
 ## Development
 
 ```text

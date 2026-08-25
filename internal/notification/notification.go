@@ -74,6 +74,7 @@ func messageBody(change model.SiteDiff) string {
 	var body strings.Builder
 	writeSection(&body, "Suggested Release", change.Suggested)
 	writeSection(&body, "Latest Release", change.Latest)
+	writeSection(&body, "Deferred Release", change.Deferred)
 	fmt.Fprintf(&body, "- Download page:\n  - %s", change.Site.URL)
 	return body.String()
 }

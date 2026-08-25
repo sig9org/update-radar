@@ -14,6 +14,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/chromedp"
+	"github.com/sig9org/update-radar/internal/debugx"
 	"github.com/sig9org/update-radar/internal/model"
 )
 
@@ -195,7 +196,7 @@ func (p *Pool) Fetch(ctx context.Context, site model.Site) (model.Snapshot, erro
 	return browser.Fetch(ctx, site)
 }
 
-// Fetch loads a site and extracts its Suggested and Latest releases.
+// Fetch loads a site and extracts its Suggested, Latest, and Deferred releases.
 func (b *Browser) Fetch(ctx context.Context, site model.Site) (model.Snapshot, error) {
 	b.fetchMu.Lock()
 	defer b.fetchMu.Unlock()
@@ -218,7 +219,18 @@ func (b *Browser) Fetch(ctx context.Context, site model.Site) (model.Snapshot, e
 		return model.Snapshot{}, fmt.Errorf("wait for Cisco release tree: %w", err)
 	}
 	if err := chromedp.Run(timedCtx,
-		chromedp.Sleep(2*time.Second),
+		chromedp.WaitReady(".p-tree-node-label"),
+		chromedp.Sleep(500*time.Millisecond),
+	); err != nil {
+		return model.Snapshot{}, fmt.Errorf("wait for Cisco release entries: %w", err)
+	}
+	toggles, expanded, err := expandReleaseTree(timedCtx)
+	if err != nil {
+		return model.Snapshot{}, fmt.Errorf("expand Cisco release tree: %w", err)
+	}
+	debugx.Printf("Cisco release tree: found %d toggle control(s), expanded %d collapsed node(s)", toggles, expanded)
+	if err := chromedp.Run(timedCtx,
+		chromedp.Sleep(500*time.Millisecond),
 		chromedp.Location(&finalURL),
 		chromedp.OuterHTML("html", &html),
 	); err != nil {
@@ -234,10 +246,72 @@ func (b *Browser) Fetch(ctx context.Context, site model.Site) (model.Snapshot, e
 	if snapshot.ProductName == "Unknown Product" {
 		return model.Snapshot{}, errors.New("the rendered page did not contain a product title")
 	}
-	if len(snapshot.Suggested) == 0 && len(snapshot.Latest) == 0 {
-		return model.Snapshot{}, errors.New("the page contained no Suggested Release or Latest Release entries")
+	if len(snapshot.Suggested) == 0 && len(snapshot.Latest) == 0 && len(snapshot.Deferred) == 0 {
+		return model.Snapshot{}, errors.New("the page contained no Suggested Release, Latest Release, or Deferred Release entries")
 	}
 	return snapshot, nil
+}
+
+// expandReleaseTree opens collapsed tree nodes so releases loaded behind a
+// toggler, including Deferred Release child versions, are present in the DOM.
+func expandReleaseTree(ctx context.Context) (int, int, error) {
+	const expandCollapsed = `(function () {
+		const root = document.querySelector("ul.p-tree-root-children");
+		if (!root) return { found: 0, clicked: 0 };
+		const toggles = new Set(root.querySelectorAll(
+			'.p-tree-node-toggle-button, [class*="toggler"]'
+		));
+		for (const item of root.querySelectorAll('[role="treeitem"][aria-expanded="false"]')) {
+			const toggle = item.querySelector('.p-tree-node-toggle-button, [class*="toggler"]');
+			if (toggle) toggles.add(toggle);
+		}
+		let clicked = 0;
+		for (const node of toggles) {
+			if (node.dataset.updateRadarExpanded === "true") continue;
+			const item = node.closest('li.p-tree-node, [role="treeitem"]');
+			const markup = (typeof node.className === "string" ? node.className : "") + " " + node.innerHTML;
+			let isCollapsed = node.getAttribute("aria-expanded") === "false" ||
+				(item && item.getAttribute("aria-expanded") === "false") ||
+				/chevron-right|angle-right|plus|collapsed|closed/.test(markup);
+			if (!isCollapsed && item) {
+				const children = Array.from(item.children).find((child) =>
+					child.matches('.p-tree-node-children, [role="group"]')
+				);
+				isCollapsed = !children || children.hidden || getComputedStyle(children).display === "none";
+			}
+			if (isCollapsed) {
+				node.dataset.updateRadarExpanded = "true";
+				node.click();
+				clicked++;
+			}
+		}
+		return { found: toggles.size, clicked: clicked };
+	})()`
+	type expansionResult struct {
+		Found   int `json:"found"`
+		Clicked int `json:"clicked"`
+	}
+	found := 0
+	expanded := 0
+	for attempt := 0; attempt < 8; attempt++ {
+		var result expansionResult
+		if err := chromedp.Run(ctx, chromedp.Evaluate(expandCollapsed, &result)); err != nil {
+			return found, expanded, err
+		}
+		if result.Found > found {
+			found = result.Found
+		}
+		if result.Clicked == 0 {
+			return found, expanded, nil
+		}
+		expanded += result.Clicked
+		select {
+		case <-ctx.Done():
+			return found, expanded, ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+	return found, expanded, nil
 }
 
 func sameDownloadPage(requested, rendered string) bool {
@@ -266,6 +340,7 @@ func Parse(r io.Reader, fetchedAt time.Time) (model.Snapshot, error) {
 	root := doc.Find("ul.p-tree-root-children").First()
 	suggestedFound := false
 	latestFound := false
+	deferredFound := false
 	root.Find("li.p-tree-node").EachWithBreak(func(_ int, node *goquery.Selection) bool {
 		text := node.Text()
 		if !suggestedFound && strings.Contains(text, "Suggested Release") {
@@ -276,22 +351,24 @@ func Parse(r io.Reader, fetchedAt time.Time) (model.Snapshot, error) {
 			result.Latest = versions(node)
 			latestFound = true
 		}
-		return !suggestedFound || !latestFound
+		if !deferredFound && strings.Contains(text, "Deferred Release") {
+			result.Deferred = versions(node)
+			deferredFound = true
+		}
+		return !suggestedFound || !latestFound || !deferredFound
 	})
 	return result, nil
 }
 
 func versions(section *goquery.Selection) []string {
-	children := section.Find("ul.p-tree-node-children").First()
 	seen := map[string]struct{}{}
 	result := []string{}
-	children.Find("li.p-tree-node").Each(func(_ int, node *goquery.Selection) {
-		label := node.Find("span.p-tree-node-label").First()
-		if label.Length() == 0 {
-			return
-		}
+	// Search the entire section instead of only its first child list. Cisco's
+	// rendered tree can use a different wrapper for nested releases, such as
+	// APIC's Deferred Release 2.3 -> 2.3(1e).
+	section.Find("span.p-tree-node-label").Each(func(_ int, label *goquery.Selection) {
 		value := strings.TrimSpace(label.Text())
-		for _, suffix := range []string{"Suggested Release", "Latest Release", "All Release"} {
+		for _, suffix := range []string{"Suggested Release", "Latest Release", "Deferred Release", "All Release"} {
 			value = strings.TrimSpace(strings.TrimSuffix(value, suffix))
 		}
 		if value == "" {
