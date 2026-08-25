@@ -22,6 +22,11 @@ func TestParse(t *testing.T) {
       <li class="p-tree-node"><span class="p-tree-node-label">17.15.2</span></li>
     </ul>
   </li>
+  <li class="p-tree-node">Deferred Release
+    <ul class="p-tree-node-children">
+      <li class="p-tree-node"><span class="p-tree-node-label">17.6.5 Deferred Release</span></li>
+    </ul>
+  </li>
 </ul></body></html>`
 	now := time.Date(2026, 8, 6, 0, 0, 0, 0, time.UTC)
 	got, err := Parse(strings.NewReader(html), now)
@@ -37,6 +42,9 @@ func TestParse(t *testing.T) {
 	if strings.Join(got.Latest, ",") != "17.15.2,17.12.5" {
 		t.Fatalf("latest = %#v", got.Latest)
 	}
+	if strings.Join(got.Deferred, ",") != "17.6.5" {
+		t.Fatalf("deferred = %#v", got.Deferred)
+	}
 }
 
 func TestParseMissingSections(t *testing.T) {
@@ -44,7 +52,7 @@ func TestParseMissingSections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ProductName != "Unknown Product" || len(got.Suggested) != 0 || len(got.Latest) != 0 {
+	if got.ProductName != "Unknown Product" || len(got.Suggested) != 0 || len(got.Latest) != 0 || len(got.Deferred) != 0 {
 		t.Fatalf("unexpected snapshot: %#v", got)
 	}
 }
@@ -143,5 +151,29 @@ func TestParseFindsSectionsBelowWrapperNodes(t *testing.T) {
 	}
 	if strings.Join(got.Latest, ",") != "6.0.7" {
 		t.Fatalf("latest = %#v", got.Latest)
+	}
+}
+
+func TestParseIncludesNestedDeferredReleases(t *testing.T) {
+	html := `<html><body>
+<h2 id="release-product-title">Application Policy Infrastructure Controller</h2>
+<ul class="p-tree-root-children">
+  <li class="p-tree-node">Deferred Release
+    <ul class="p-tree-node-children">
+      <li class="p-tree-node"><span class="p-tree-node-label">2.3</span>
+        <ul class="p-tree-node-children">
+          <li class="p-tree-node"><span class="p-tree-node-label">2.3(1e)</span></li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul></body></html>`
+
+	got, err := Parse(strings.NewReader(html), time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got.Deferred, ",") != "2.3,2.3(1e)" {
+		t.Fatalf("deferred = %#v, want parent and child releases", got.Deferred)
 	}
 }

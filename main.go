@@ -391,14 +391,17 @@ func checkProfile(ctx context.Context, profile string, s appconfig.Settings, p a
 				pp = &prev
 			}
 			d := diff.Compute(site, pp, snap)
-			logger.Debugf("Cisco version: %s suggested=%v latest=%v", site.Name, snap.Suggested, snap.Latest)
+			logger.Debugf("Cisco version: %s suggested=%v latest=%v deferred=%v", site.Name, snap.Suggested, snap.Latest, snap.Deferred)
 			if d.Changed() {
-				changes := make([]string, 0, 2)
+				changes := make([]string, 0, 3)
 				if d.Suggested.Changed() {
 					changes = append(changes, fmt.Sprintf("suggested: %s -> %s", strings.Join(d.Suggested.Removed, ","), strings.Join(d.Suggested.Added, ",")))
 				}
 				if d.Latest.Changed() {
 					changes = append(changes, fmt.Sprintf("latest: %s -> %s", strings.Join(d.Latest.Removed, ","), strings.Join(d.Latest.Added, ",")))
+				}
+				if d.Deferred.Changed() {
+					changes = append(changes, fmt.Sprintf("deferred: %s -> %s", strings.Join(d.Deferred.Removed, ","), strings.Join(d.Deferred.Added, ",")))
 				}
 				logger.Warnf("Cisco version update: %s (%s)", site.Name, strings.Join(changes, "; "))
 			}
