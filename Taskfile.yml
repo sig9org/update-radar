@@ -36,14 +36,27 @@ tasks:
     cmds:
       - task --list
 
+  _default:defer:
+    internal: true
+    cmds:
+      - defer: &template-defer
+          task: notify
+          vars:
+            NOTIFY_CONTEXT:
+              map:
+                START_TIME: '{{.START_TIME}}'
+                NOTIFY_TITLE: '{{.TASK}} (go-task)'
+
   cleanup:
     aliases: [c]
     desc: 'Cleanup unnecessary files'
     cmds:
-      - defer:
-          task: time
-          vars:
-            START_TIME: '{{.START_TIME}}'
+      - defer: *template-defer
+      - task: cleanup:internal
+
+  cleanup:internal:
+    internal: true
+    cmds:
       - task: cleanup:shell
       - task: cleanup:win
 
@@ -63,24 +76,16 @@ tasks:
     platforms: [windows]
     cmds:
       - for: { var: CLEANUP_DIRS }
-        cmd: powershell -NoProfile -Command "Get-ChildItem -Path . -Recurse -Directory -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq '{{.ITEM}}' } | Sort-Object FullName -Descending | ForEach-Object { Write-Output ('[DELETE]' + $_.FullName); Remove-Item -LiteralPath $_.FullName -Recurse -Force }"
+        cmd: powershell -NoProfile -Command $'Get-ChildItem -Path . -Recurse -Directory -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq "{{.ITEM}}" } | Sort-Object FullName -Descending | ForEach-Object { Write-Output ("[DELETE] $($_.FullName)"); Remove-Item -LiteralPath $_.FullName -Recurse -Force }'
       - for: { var: CLEANUP_FILES }
-        cmd: powershell -NoProfile -Command "Get-ChildItem -Path . -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq '{{.ITEM}}' } | ForEach-Object { Write-Output ('[DELETE]' + $_.FullName); Remove-Item -LiteralPath $_.FullName -Force }"
+        cmd: powershell -NoProfile -Command $'Get-ChildItem -Path . -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq "{{.ITEM}}" } | ForEach-Object { Write-Output ("[DELETE] $($_.FullName)"); Remove-Item -LiteralPath $_.FullName -Force }'
 
   go-build:
     aliases: [gb]
     desc: 'Build a binary for the current platform'
     dir: '{{.TASKFILE_DIR}}'
     cmds:
-      - defer:
-          task: time
-          vars:
-            START_TIME: '{{.START_TIME}}'
-      - defer:
-          task: notify
-          vars:
-            NOTIFY_TITLE: 'Go Build'
-            NOTIFY_BODY: 'Done.'
+      - defer: *template-defer
       - task: go-clean:internal
       - echo "Building binary for {{OS}}/{{ARCH}}..."
       - go build -ldflags "-X {{.VERSION_PKG}}.Version={{.VERSION}}" -o {{.DIST_DIR}}/{{.BINARY_NAME}}{{if eq OS "windows"}}.exe{{end}} .
@@ -90,15 +95,7 @@ tasks:
     desc: 'Cross-compile release binaries for all platforms'
     dir: '{{.TASKFILE_DIR}}'
     cmds:
-      - defer:
-          task: time
-          vars:
-            START_TIME: '{{.START_TIME}}'
-      - defer:
-          task: notify
-          vars:
-            NOTIFY_TITLE: 'Go Build All'
-            NOTIFY_BODY: 'Done.'
+      - defer: *template-defer
       - task: go-clean:internal
       - |
         set -e
@@ -111,22 +108,14 @@ tasks:
           echo "building ${out}"
           CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -ldflags "-X {{.VERSION_PKG}}.Version={{.RELEASE_VERSION}}" -o "$out" .
         done
-      - task: go-hash
+      - task: go-hash:internal
 
   go-clean:
     aliases: [gc]
     desc: 'Delete the contents of the distribution directory'
     dir: '{{.TASKFILE_DIR}}'
     cmds:
-      - defer:
-          task: time
-          vars:
-            START_TIME: '{{.START_TIME}}'
-      - defer:
-          task: notify
-          vars:
-            NOTIFY_TITLE: 'Go Clean'
-            NOTIFY_BODY: 'Done.'
+      - defer: *template-defer
       - task: go-clean:internal
 
   go-clean:internal:
@@ -136,7 +125,7 @@ tasks:
       - rm -rfv {{.DIST_DIR}}/*
       - mkdir -p {{.DIST_DIR}}
 
-  go-hash:
+  go-hash:internal:
     dir: '{{.TASKFILE_DIR}}'
     internal: true
     platforms: [darwin, linux]
@@ -161,42 +150,19 @@ tasks:
           (cd "{{.DIST_DIR}}" && {{.HASHTOOL}} "$name") >> "{{.DIST_DIR}}/checksums.txt"
         done
 
-  go-register:
-    desc: 'Register the latest tagged version on pkg.go.dev'
+  go-mcp-inspector:
+    aliases: [gm,gmcp]
+    desc: 'Debugging with MCP Inspector'
     dir: '{{.TASKFILE_DIR}}'
     cmds:
-      - defer:
-          task: time
-          vars:
-            START_TIME: '{{.START_TIME}}'
-      - defer:
-          task: notify
-          vars:
-            NOTIFY_TITLE: 'Go Register'
-            NOTIFY_BODY: 'Done.'
-      - |
-        set -e
-        version=$(git describe --tags --abbrev=0)
-        echo "registering {{.MODULE}}@${version} on pkg.go.dev"
-        curl -fsS "https://proxy.golang.org/{{.MODULE}}/@v/${version}.info"
-        echo
-        curl -fsS -o /dev/null "https://pkg.go.dev/{{.MODULE}}@${version}"
-        echo "requested indexing of {{.MODULE}}@${version}"
+      - npx @modelcontextprotocol/inspector go run ./cmd/confgrep mcp -transport stdio
 
   go-run:
     aliases: [gr]
     desc: 'Run the application'
     dir: '{{.TASKFILE_DIR}}'
     cmds:
-      - defer:
-          task: time
-          vars:
-            START_TIME: '{{.START_TIME}}'
-      - defer:
-          task: notify
-          vars:
-            NOTIFY_TITLE: 'Go Run'
-            NOTIFY_BODY: 'Done.'
+      - defer: *template-defer
       - go run . {{.CLI_ARGS}}
 
   go-run-debug:
@@ -204,15 +170,7 @@ tasks:
     desc: 'Run the application (debug)'
     dir: '{{.TASKFILE_DIR}}'
     cmds:
-      - defer:
-          task: time
-          vars:
-            START_TIME: '{{.START_TIME}}'
-      - defer:
-          task: notify
-          vars:
-            NOTIFY_TITLE: 'Go Run (debug)'
-            NOTIFY_BODY: 'Done.'
+      - defer: *template-defer
       - go run . -debug -config config_debug.yml {{.CLI_ARGS}}
 
   go-scan:
@@ -221,15 +179,7 @@ tasks:
     dir: '{{.TASKFILE_DIR}}'
     ignore_error: true
     cmds:
-      - defer:
-          task: time
-          vars:
-            START_TIME: '{{.START_TIME}}'
-      - defer:
-          task: notify
-          vars:
-            NOTIFY_TITLE: 'Go Scan'
-            NOTIFY_BODY: 'Done.'
+      - defer: *template-defer
       - |
         GREEN='\033[0;32m'
         RESET='\033[0m'
@@ -246,15 +196,7 @@ tasks:
     desc: 'Run the Go test suite'
     dir: '{{.TASKFILE_DIR}}'
     cmds:
-      - defer:
-          task: time
-          vars:
-            START_TIME: '{{.START_TIME}}'
-      - defer:
-          task: notify
-          vars:
-            NOTIFY_TITLE: 'Go Test'
-            NOTIFY_BODY: 'Done.'
+      - defer: *template-defer
       - go vet ./...
       - go test ./...
 
@@ -263,49 +205,43 @@ tasks:
     desc: 'Show version information'
     dir: '{{.TASKFILE_DIR}}'
     cmds:
-      - defer:
-          task: time
-          vars:
-            START_TIME: '{{.START_TIME}}'
-      - defer:
-          task: notify
-          vars:
-            NOTIFY_TITLE: 'Go Version'
-            NOTIFY_BODY: 'Done.'
+      - defer: *template-defer
       - go run -ldflags "-X {{.VERSION_PKG}}.Version={{.VERSION}}" . -v
 
   notify:
     internal: true
     cmds:
-      - task: notify:mac
+      - task: notify:time
         vars:
-          NOTIFY_TITLE: '{{.NOTIFY_TITLE}}'
-          NOTIFY_BODY: '{{.NOTIFY_BODY}}'
-      - task: notify:win
+          NOTIFY_CONTEXT:
+            ref: .NOTIFY_CONTEXT
+      - task: notify:toast
         vars:
-          NOTIFY_TITLE: '{{.NOTIFY_TITLE}}'
-          NOTIFY_BODY: '{{.NOTIFY_BODY}}'
+          NOTIFY_CONTEXT:
+            ref: .NOTIFY_CONTEXT
 
-  notify:mac:
-    internal: true
-    platforms: [darwin]
-    cmds:
-      - osascript -e 'display notification "{{.NOTIFY_BODY}}" with title "{{.NOTIFY_TITLE}}"'
-      - /bin/sh -c 'nohup /usr/bin/afplay /System/Library/Sounds/Glass.aiff >/dev/null 2>&1 < /dev/null &'
-
-  notify:win:
-    internal: true
-    platforms: [windows]
-    cmds:
-      - powershell -NoProfile -Command "[System.Media.SystemSounds]::Beep.Play(); $notify = New-Object System.Windows.Forms.NotifyIcon; $notify.Icon = [System.Drawing.SystemIcons]::Information; $notify.BalloonTipTitle = '{{.NOTIFY_TITLE}}'; $notify.BalloonTipText = '{{.NOTIFY_BODY}}'; $notify.Visible = $true; $notify.ShowBalloonTip(5000); Start-Sleep -Seconds 5; $notify.Dispose()"
-
-  time:
+  notify:time:
     internal: true
     vars:
       END_TIME: '{{now.UnixMilli}}'
     cmds:
+      - task: notify:time:shell
+        vars:
+          NOTIFY_CONTEXT:
+            ref: .NOTIFY_CONTEXT
+      - task: notify:time:win
+        vars:
+          NOTIFY_CONTEXT:
+            ref: .NOTIFY_CONTEXT
+
+  notify:time:shell:
+    internal: true
+    platforms: [darwin,linux]
+    vars:
+      END_TIME: '{{now.UnixMilli}}'
+    cmds:
       - |
-        ELAPSED_MS=$(({{.END_TIME}} - {{.START_TIME}}))
+        ELAPSED_MS=$(({{.END_TIME}} - {{.NOTIFY_CONTEXT.START_TIME}}))
         MINUTES=$((ELAPSED_MS / 60000))
         SECONDS=$((ELAPSED_MS % 60000 / 1000))
         MILLIS=$((ELAPSED_MS % 1000))
@@ -318,3 +254,39 @@ tasks:
         else
           printf '%b======================================== Elapsed: %s msec%b\n' "$GREEN" "$MILLIS" "$RESET"
         fi
+
+  notify:time:win:
+    internal: true
+    platforms: [windows]
+    vars:
+      END_TIME: '{{now.UnixMilli}}'
+    cmds:
+      - |
+        powershell.exe -NoProfile -Sta -Command '$elapsedMs = [int64]{{.END_TIME}} - [int64]{{.NOTIFY_CONTEXT.START_TIME}}; $minutes = [math]::Floor($elapsedMs / 60000); $remainingMs = $elapsedMs - ($minutes * 60000); $seconds = [math]::Floor($remainingMs / 1000); $millis = $remainingMs - ($seconds * 1000); if ($minutes -gt 0) { $message = "======================================== Elapsed: {0} min {1} sec {2} msec" -f $minutes, $seconds, $millis } elseif ($seconds -gt 0) { $message = "======================================== Elapsed: {0} sec {1} msec" -f $seconds, $millis } else { $message = "======================================== Elapsed: {0} msec" -f $millis }; Write-Host $message -ForegroundColor Green'
+
+  notify:toast:
+    internal: true
+    cmds:
+      - task: notify:toast:mac
+        vars:
+          NOTIFY_CONTEXT:
+            ref: .NOTIFY_CONTEXT
+      - task: notify:toast:win
+        vars:
+          NOTIFY_CONTEXT:
+            ref: .NOTIFY_CONTEXT
+
+  notify:toast:mac:
+    internal: true
+    platforms: [darwin]
+    vars:
+      END_TIME: '{{now.UnixMilli}}'
+    cmds:
+      - osascript -e 'display notification "Done." with title "[Task] {{.NOTIFY_CONTEXT.NOTIFY_TITLE}}"'
+      - /bin/sh -c 'nohup /usr/bin/afplay /System/Library/Sounds/Glass.aiff >/dev/null 2>&1 < /dev/null &'
+
+  notify:toast:win:
+    internal: true
+    platforms: [windows]
+    cmds:
+      - powershell.exe -NoProfile -Sta -Command 'Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; [System.Media.SystemSounds]::Beep.Play(); $notify = New-Object System.Windows.Forms.NotifyIcon; $notify.Icon = [System.Drawing.SystemIcons]::Information; $notify.BalloonTipTitle = "[Task] {{.NOTIFY_CONTEXT.NOTIFY_TITLE}}"; $notify.BalloonTipText = "Done."; $notify.Visible = $true; $notify.ShowBalloonTip(5000); Start-Sleep -Seconds 5; $notify.Dispose()'

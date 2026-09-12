@@ -97,3 +97,6 @@ profiles:
         check: "https://cloud-images.ubuntu.com/resolute/"
       - name: "Wireshark"
         check: "https://www.wireshark.org/docs/relnotes/"
+    feed:
+      - name: "Example RSS Feed"
+        url: "https://example.com/feed.xml"

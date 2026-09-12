@@ -12,6 +12,7 @@ import (
 	"github.com/sig9org/update-radar/internal/appconfig"
 	ciscostate "github.com/sig9org/update-radar/internal/ciscostate"
 	"github.com/sig9org/update-radar/internal/diff"
+	feedmonitor "github.com/sig9org/update-radar/internal/feed"
 	"github.com/sig9org/update-radar/internal/githubapi"
 	githubstate "github.com/sig9org/update-radar/internal/githubstate"
 	"github.com/sig9org/update-radar/internal/model"
@@ -32,6 +33,7 @@ const (
 	Cisco  Target = "cisco"
 	GitHub Target = "github"
 	Web    Target = "web"
+	Feed   Target = "feed"
 )
 
 // Options controls an embedded check. An empty Targets slice checks all
@@ -49,12 +51,14 @@ type Result struct {
 	CiscoUpdates  int
 	GitHubUpdates int
 	WebUpdates    int
+	FeedUpdates   int
 }
 
 type stateFile struct {
-	Cisco  ciscostate.File   `yaml:"cisco"`
-	GitHub githubstate.State `yaml:"github"`
-	Web    webstate.State    `yaml:"web"`
+	Cisco  ciscostate.File              `yaml:"cisco"`
+	GitHub githubstate.State            `yaml:"github"`
+	Web    webstate.State               `yaml:"web"`
+	Feed   map[string]feedmonitor.State `yaml:"feed"`
 }
 
 // Check loads the configured profiles and checks the requested categories.
@@ -103,8 +107,20 @@ func Check(ctx context.Context, opts Options) (Result, error) {
 			st.Web = next
 			result.WebUpdates += n
 		}
+		if selected(Feed) {
+			for _, site := range profile.Feed {
+				next, ev, err := feedmonitor.NewClient(cfg.Settings.Timeout, cfg.Settings.UserAgent).Check(ctx, site, st.Feed[site.URL])
+				if err != nil {
+					return result, err
+				}
+				st.Feed[site.URL] = next
+				if ev.ChangedAny() {
+					result.FeedUpdates++
+				}
+			}
+		}
 	}
-	result.Updated = result.CiscoUpdates+result.GitHubUpdates+result.WebUpdates > 0
+	result.Updated = result.CiscoUpdates+result.GitHubUpdates+result.WebUpdates+result.FeedUpdates > 0
 	if !opts.ReadOnly {
 		if err := saveState(appconfig.StatePath(path), st); err != nil {
 			return result, err
@@ -115,6 +131,7 @@ func Check(ctx context.Context, opts Options) (Result, error) {
 
 func loadState(path string) (stateFile, error) {
 	st := stateFile{Cisco: ciscostate.File{Sites: map[string]model.Snapshot{}}, GitHub: githubstate.State{Repositories: map[string]githubstate.RepoState{}}, Web: webstate.State{Sites: map[string]webstate.SiteState{}}}
+	st.Feed = map[string]feedmonitor.State{}
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return st, nil
@@ -133,6 +150,9 @@ func loadState(path string) (stateFile, error) {
 	}
 	if st.Web.Sites == nil {
 		st.Web.Sites = map[string]webstate.SiteState{}
+	}
+	if st.Feed == nil {
+		st.Feed = map[string]feedmonitor.State{}
 	}
 	return st, nil
 }
