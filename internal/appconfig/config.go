@@ -2,11 +2,13 @@ package appconfig
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/sig9org/update-radar/internal/feed"
 	"github.com/sig9org/update-radar/internal/repoconfig"
 	"github.com/sig9org/update-radar/internal/siteconfig"
 	"gopkg.in/yaml.v3"
@@ -80,7 +82,16 @@ type Notification struct {
 		Destination string   `yaml:"destination"`
 		Mention     []string `yaml:"mention"`
 	} `yaml:"discord"`
-	Email map[string]any `yaml:"email"`
+	Email struct {
+		SMTPHost     string   `yaml:"smtp_host"`
+		SMTPPort     int      `yaml:"smtp_port"`
+		SMTPUsername string   `yaml:"smtp_username"`
+		SMTPPassword string   `yaml:"smtp_password"`
+		From         string   `yaml:"from"`
+		To           []string `yaml:"to"`
+		Cc           []string `yaml:"cc"`
+		Bcc          []string `yaml:"bcc"`
+	} `yaml:"email"`
 	Slack struct {
 		Destination, Token, Channel string
 		Mention                     []string `yaml:"mention"`
@@ -103,6 +114,7 @@ type Profile struct {
 	Cisco         []CiscoSite             `yaml:"cisco"`
 	GitHub        []repoconfig.Repository `yaml:"github"`
 	Web           []siteconfig.Site       `yaml:"web"`
+	Feed          []feed.Site             `yaml:"feed"`
 }
 type File struct {
 	Settings Settings           `yaml:"settings"`
@@ -120,6 +132,18 @@ func Load(path string) (File, error) {
 	}
 	if len(c.Profiles) == 0 {
 		return File{}, fmt.Errorf("config %q contains no profiles", path)
+	}
+	for name, profile := range c.Profiles {
+		for i, item := range profile.Feed {
+			parsed, err := url.ParseRequestURI(strings.TrimSpace(item.URL))
+			if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+				return File{}, fmt.Errorf("profile %q feed[%d].url must be a valid HTTPS URL", name, i)
+			}
+			c.Profiles[name].Feed[i].URL = strings.TrimSpace(item.URL)
+			if strings.TrimSpace(item.Name) == "" {
+				c.Profiles[name].Feed[i].Name = item.URL
+			}
+		}
 	}
 	return c, nil
 }

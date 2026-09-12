@@ -8,9 +8,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 `update-radar` is a Go CLI that monitors Cisco software pages, GitHub
-repositories, and arbitrary web pages. It stores observations in a state file
-next to the configuration and sends changes through chatxgo (Cisco Webex,
-Microsoft Teams, Slack, or Discord).
+repositories, arbitrary web pages, and RSS, Atom, and JSON Feed documents. It
+stores observations in a state file next to the configuration and sends
+changes through chatxgo (Cisco Webex, Microsoft Teams, Slack, Discord, or
+email).
 
 ## Configuration
 
@@ -20,6 +21,24 @@ concurrency, logging, and browser behavior. Mentions are configured
 independently under each notification destination. Credentials and
 destination URLs must be supplied through configuration or deployment
 secrets; they are not embedded in the program.
+
+Add a `feed` list to a profile to monitor a feed:
+
+```yaml
+feed:
+  - name: "Example RSS Feed"
+    url: "https://example.com/feed.xml"
+```
+
+Feed checks send `If-Modified-Since` using the saved `Last-Modified` value and
+accept HTTP 304 responses without downloading the document. Current feed items
+are stored in the state file; after the initial baseline, only added or changed
+items are notified. When a server does not provide `Last-Modified`, the
+response body hash and item-level comparison provide the fallback. ETags are
+also persisted and sent as `If-None-Match` when available.
+
+Each changed feed is sent as an individual notification. Multiple changed
+items within the same feed are included in that feed's notification.
 
 The state filename follows the configuration filename: `config.yml` becomes
 `config_state.yml`, while `all.yaml` becomes `all_state.yaml`.

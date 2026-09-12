@@ -16,6 +16,7 @@ import (
 	ciscostate "github.com/sig9org/update-radar/internal/ciscostate"
 	"github.com/sig9org/update-radar/internal/debugx"
 	"github.com/sig9org/update-radar/internal/diff"
+	feedmonitor "github.com/sig9org/update-radar/internal/feed"
 	"github.com/sig9org/update-radar/internal/githubapi"
 	githubstate "github.com/sig9org/update-radar/internal/githubstate"
 	"github.com/sig9org/update-radar/internal/logx"
@@ -39,9 +40,10 @@ type options struct {
 	debug, debugSet, dryrun, init, silent, update, version, help bool
 }
 type savedState struct {
-	Cisco  ciscostate.File   `yaml:"cisco"`
-	GitHub githubstate.State `yaml:"github"`
-	Web    webstate.State    `yaml:"web"`
+	Cisco  ciscostate.File              `yaml:"cisco"`
+	GitHub githubstate.State            `yaml:"github"`
+	Web    webstate.State               `yaml:"web"`
+	Feed   map[string]feedmonitor.State `yaml:"feed"`
 }
 
 type profileMessage struct {
@@ -123,7 +125,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	statePath := appconfig.StatePath(path)
-	st := savedState{Cisco: ciscostate.File{Sites: map[string]model.Snapshot{}}, GitHub: githubstate.State{Repositories: map[string]githubstate.RepoState{}}, Web: webstate.State{Sites: map[string]webstate.SiteState{}}}
+	st := savedState{Cisco: ciscostate.File{Sites: map[string]model.Snapshot{}}, GitHub: githubstate.State{Repositories: map[string]githubstate.RepoState{}}, Web: webstate.State{Sites: map[string]webstate.SiteState{}}, Feed: map[string]feedmonitor.State{}}
 	if !o.init {
 		if data, e := os.ReadFile(statePath); e == nil {
 			if e = yaml.Unmarshal(data, &st); e != nil {
@@ -134,6 +136,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 			logger.Errorf("read state: %v", e)
 			return 1
 		}
+	}
+	if st.Feed == nil {
+		st.Feed = map[string]feedmonitor.State{}
 	}
 	ctx := context.Background()
 	chatMessages := make([]profileMessage, 0)
@@ -167,7 +172,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 func sendProfileMessage(ctx context.Context, item profileMessage, logger *logx.Logger) error {
-	tools := []string{"webex", "teams", "slack", "discord"}
+	tools := []string{"webex", "teams", "slack", "discord", "email"}
 	configured := false
 	var firstErr error
 	for _, tool := range tools {
@@ -231,8 +236,10 @@ func notificationConfig(n appconfig.Notification, tool string) (notify.Config, [
 	case "discord":
 		cfg = notify.Config{Proxy: n.Proxy, Discord: notify.DiscordConfig{Dest: n.Discord.Destination}}
 		raw = n.Discord.Mention
+	case "email":
+		cfg = notify.Config{Proxy: n.Proxy, Email: notify.EmailConfig{Host: n.Email.SMTPHost, Port: n.Email.SMTPPort, Username: n.Email.SMTPUsername, Password: n.Email.SMTPPassword, From: n.Email.From, To: n.Email.To, Cc: n.Email.Cc, Bcc: n.Email.Bcc}}
 	}
-	if cfg.Webex.Dest == "" && cfg.Teams.Dest == "" && cfg.Slack.Dest == "" && cfg.Discord.Dest == "" {
+	if cfg.Webex.Dest == "" && cfg.Teams.Dest == "" && cfg.Slack.Dest == "" && cfg.Discord.Dest == "" && cfg.Email.Host == "" {
 		return cfg, nil, false
 	}
 	mentions := make([]notify.Mention, 0, len(raw))
@@ -255,6 +262,8 @@ func notificationToolName(tool string) string {
 		return "Slack"
 	case "discord":
 		return "Discord"
+	case "email":
+		return "Email"
 	default:
 		return tool
 	}
@@ -330,6 +339,26 @@ func checkProfile(ctx context.Context, profile string, s appconfig.Settings, p a
 			for _, message := range ms {
 				messages = append(messages, profileMessage{Profile: profile, Message: message, Software: separateSoftware(s, message), Notifications: p.Notifications})
 			}
+		}
+	}
+	if len(p.Feed) > 0 {
+		client := feedmonitor.NewClient(s.Timeout, s.UserAgent)
+		for _, site := range p.Feed {
+			logger.Debugf("Feed URL: %s", site.URL)
+			next, event, err := client.Check(ctx, site, st.Feed[site.URL])
+			if err != nil {
+				logger.Errorf("Feed check failed for %s: %v", site.Name, err)
+				continue
+			}
+			st.Feed[site.URL] = next
+			if !event.ChangedAny() {
+				continue
+			}
+			logger.Warnf("Feed update: %s (+%d changed %d)", site.Name, len(event.Added), len(event.Changed))
+			// Create one message per configured feed. Feed notifications are
+			// intentionally not aggregated with other feeds in this profile.
+			m := feedMessage(event, s)
+			messages = append(messages, profileMessage{Profile: profile, Message: m, Software: separateSoftware(s, m), Notifications: p.Notifications})
 		}
 	}
 	if len(p.Cisco) > 0 {
@@ -415,6 +444,25 @@ func checkProfile(ctx context.Context, profile string, s appconfig.Settings, p a
 		}
 	}
 	return messages, st, nil
+}
+
+func feedMessage(event feedmonitor.Event, s appconfig.Settings) notify.Message {
+	var b strings.Builder
+	for _, item := range append(event.Added, event.Changed...) {
+		fmt.Fprintf(&b, "- [%s](%s)\n", item.Title, item.URL)
+	}
+	if b.Len() == 0 && event.LastModifiedChanged {
+		b.WriteString("- Feed Last-Modified changed; no item-level content difference was reported.")
+	} else if b.Len() == 0 && event.BodyChanged {
+		b.WriteString("- Feed body changed; no item-level content difference was reported.")
+	}
+	mentions := make([]notify.Mention, 0, len(s.Mention))
+	for _, raw := range s.Mention {
+		if m, err := notify.ParseMention(raw); err == nil {
+			mentions = append(mentions, m)
+		}
+	}
+	return notify.Message{Subject: event.Site.Name, Body: strings.TrimRight(b.String(), "\n"), Mentions: mentions}
 }
 
 func chatConfig(profiles map[string]appconfig.Profile) (notify.Config, error) {
