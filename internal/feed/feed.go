@@ -38,6 +38,13 @@ func (e Event) ChangedAny() bool {
 	return len(e.Added) > 0 || len(e.Changed) > 0 || e.LastModifiedChanged || e.BodyChanged
 }
 
+// HasItemChanges reports whether the feed contains added or changed items.
+// Transport-level changes such as Last-Modified or body hash changes do not
+// count because they may not represent a content update to a feed item.
+func (e Event) HasItemChanges() bool {
+	return len(e.Added) > 0 || len(e.Changed) > 0
+}
+
 type Client struct {
 	HTTPClient *http.Client
 	UserAgent  string

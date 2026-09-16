@@ -114,7 +114,7 @@ func Check(ctx context.Context, opts Options) (Result, error) {
 					return result, err
 				}
 				st.Feed[site.URL] = next
-				if ev.ChangedAny() {
+				if ev.HasItemChanges() {
 					result.FeedUpdates++
 				}
 			}
