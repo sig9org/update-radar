@@ -42,3 +42,36 @@ func TestParseAtomAndJSONFeed(t *testing.T) {
 		t.Fatalf("json: %#v %v", jsonItems, err)
 	}
 }
+
+func TestCheckMetadataOrBodyChangeWithoutItemChangeIsNotContentChange(t *testing.T) {
+	modified := "Mon, 02 Jan 2006 15:04:05 GMT"
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/rss+xml")
+		w.Header().Set("Last-Modified", modified)
+		body := `<rss><channel><item><guid>1</guid><title>First</title><link>https://example.test/1</link><description>same</description></item></channel></rss>`
+		if requests > 1 {
+			body = `<rss> <channel><item><guid>1</guid><title>First</title><link>https://example.test/1</link><description>same</description></item></channel></rss>`
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	defer server.Close()
+
+	c := NewClient(0, "test")
+	previous, _, err := c.Check(context.Background(), Site{Name: "test", URL: server.URL}, State{})
+	if err != nil {
+		t.Fatalf("first check: %v", err)
+	}
+	previous.LastModified = "Sun, 01 Jan 2006 15:04:05 GMT"
+	next, ev, err := c.Check(context.Background(), Site{Name: "test", URL: server.URL}, previous)
+	if err != nil {
+		t.Fatalf("second check: %v", err)
+	}
+	if !ev.LastModifiedChanged || !ev.BodyChanged || ev.HasItemChanges() {
+		t.Fatalf("event=%#v, want metadata/body change without item change", ev)
+	}
+	if next.BodyHash == previous.BodyHash {
+		t.Fatalf("body hash did not change: %q", next.BodyHash)
+	}
+}

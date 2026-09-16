@@ -351,7 +351,7 @@ func checkProfile(ctx context.Context, profile string, s appconfig.Settings, p a
 				continue
 			}
 			st.Feed[site.URL] = next
-			if !event.ChangedAny() {
+			if !event.HasItemChanges() {
 				continue
 			}
 			logger.Warnf("Feed update: %s (+%d changed %d)", site.Name, len(event.Added), len(event.Changed))
@@ -450,11 +450,6 @@ func feedMessage(event feedmonitor.Event, s appconfig.Settings) notify.Message {
 	var b strings.Builder
 	for _, item := range append(event.Added, event.Changed...) {
 		fmt.Fprintf(&b, "- [%s](%s)\n", item.Title, item.URL)
-	}
-	if b.Len() == 0 && event.LastModifiedChanged {
-		b.WriteString("- Feed Last-Modified changed; no item-level content difference was reported.")
-	} else if b.Len() == 0 && event.BodyChanged {
-		b.WriteString("- Feed body changed; no item-level content difference was reported.")
 	}
 	mentions := make([]notify.Mention, 0, len(s.Mention))
 	for _, raw := range s.Mention {

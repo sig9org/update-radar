@@ -45,7 +45,7 @@ tasks:
             NOTIFY_CONTEXT:
               map:
                 START_TIME: '{{.START_TIME}}'
-                NOTIFY_TITLE: '{{.TASK}} (go-task)'
+                NOTIFY_TITLE: '{{.TASK}}'
 
   cleanup:
     aliases: [c]
