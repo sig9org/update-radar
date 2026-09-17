@@ -141,11 +141,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 		st.Feed = map[string]feedmonitor.State{}
 	}
 	ctx := context.Background()
+	// Every profile must compare against the state from before this run. The
+	// working state is still shared so that observations are persisted once,
+	// but a profile must not suppress another profile's notification.
+	baseline := cloneSavedState(st)
 	chatMessages := make([]profileMessage, 0)
 	for name, p := range cfg.Profiles {
 		logger.Infof("[%s] checking", name)
 		logger.Debugf("profile=%s cisco=%d github=%d web=%d threads=%d timeout=%s headless=%t separate=%t user-agent=%t", name, len(p.Cisco), len(p.GitHub), len(p.Web), cfg.Settings.Threads, cfg.Settings.Timeout, cfg.Settings.Headless, cfg.Settings.Separate, strings.TrimSpace(cfg.Settings.UserAgent) != "")
-		msgs, newSt, err := checkProfile(ctx, name, cfg.Settings, p, st, logger)
+		msgs, newSt, err := checkProfile(ctx, name, cfg.Settings, p, st, baseline, logger)
 		if err != nil {
 			logger.Errorf("profile %s: %v", name, err)
 			st = newSt
@@ -283,8 +287,37 @@ func separateSoftware(settings appconfig.Settings, message notify.Message) strin
 	return message.Subject
 }
 
-func checkProfile(ctx context.Context, profile string, s appconfig.Settings, p appconfig.Profile, st savedState, logger *logx.Logger) ([]profileMessage, savedState, error) {
+func cloneSavedState(src savedState) savedState {
+	dst := savedState{
+		Cisco:  ciscostate.File{Sites: make(map[string]model.Snapshot, len(src.Cisco.Sites))},
+		GitHub: githubstate.State{Repositories: make(map[string]githubstate.RepoState, len(src.GitHub.Repositories))},
+		Web:    webstate.State{Sites: make(map[string]webstate.SiteState, len(src.Web.Sites))},
+		Feed:   make(map[string]feedmonitor.State, len(src.Feed)),
+	}
+	for key, snapshot := range src.Cisco.Sites {
+		snapshot.Suggested = append([]string(nil), snapshot.Suggested...)
+		snapshot.Latest = append([]string(nil), snapshot.Latest...)
+		snapshot.Deferred = append([]string(nil), snapshot.Deferred...)
+		dst.Cisco.Sites[key] = snapshot
+	}
+	for key, state := range src.GitHub.Repositories {
+		dst.GitHub.Repositories[key] = state
+	}
+	for key, state := range src.Web.Sites {
+		dst.Web.Sites[key] = state
+	}
+	for key, state := range src.Feed {
+		state.Items = append([]feedmonitor.Item(nil), state.Items...)
+		dst.Feed[key] = state
+	}
+	return dst
+}
+
+func checkProfile(ctx context.Context, profile string, s appconfig.Settings, p appconfig.Profile, st, baseline savedState, logger *logx.Logger) ([]profileMessage, savedState, error) {
 	var messages []profileMessage
+	// The checkers update the maps they receive, so each profile gets its own
+	// comparison copy of the run-start state.
+	comparison := cloneSavedState(baseline)
 	mentions := make([]notify.Mention, 0, len(s.Mention))
 	for _, raw := range s.Mention {
 		m, err := notify.ParseMention(raw)
@@ -298,8 +331,12 @@ func checkProfile(ctx context.Context, profile string, s appconfig.Settings, p a
 			logger.Debugf("GitHub URL: %s", repo.URL)
 		}
 		cfg := repoconfig.Config{Settings: repoconfig.Settings{GitHubToken: s.GitHubToken}, Repositories: p.GitHub}
-		events, next := monitor.CheckRepositories(ctx, githubapi.NewClient(s.GitHubToken), cfg, st.GitHub)
-		st.GitHub = next
+		events, next := monitor.CheckRepositories(ctx, githubapi.NewClient(s.GitHubToken), cfg, comparison.GitHub)
+		for _, repo := range p.GitHub {
+			if state, ok := next.Repositories[repo.Name]; ok {
+				st.GitHub.Repositories[repo.Name] = state
+			}
+		}
 		for _, event := range events {
 			logger.Warnf("GitHub version update: %s %s -> %s", event.RepoName, event.Previous, event.Current)
 		}
@@ -326,8 +363,12 @@ func checkProfile(ctx context.Context, profile string, s appconfig.Settings, p a
 			logger.Debugf("Web URL: %s", site.Check)
 		}
 		cfg := siteconfig.Config{Sites: p.Web}
-		events, next := sentinel.CheckSites(ctx, webclient.NewClient(s.Timeout), cfg, st.Web)
-		st.Web = next
+		events, next := sentinel.CheckSites(ctx, webclient.NewClient(s.Timeout), cfg, comparison.Web)
+		for _, site := range p.Web {
+			if state, ok := next.Sites[site.Name]; ok {
+				st.Web.Sites[site.Name] = state
+			}
+		}
 		for _, event := range events {
 			logger.Warnf("Web content update: %s %s -> %s", event.SiteName, event.Previous, event.Current)
 		}
@@ -345,7 +386,7 @@ func checkProfile(ctx context.Context, profile string, s appconfig.Settings, p a
 		client := feedmonitor.NewClient(s.Timeout, s.UserAgent)
 		for _, site := range p.Feed {
 			logger.Debugf("Feed URL: %s", site.URL)
-			next, event, err := client.Check(ctx, site, st.Feed[site.URL])
+			next, event, err := client.Check(ctx, site, comparison.Feed[site.URL])
 			if err != nil {
 				logger.Errorf("Feed check failed for %s: %v", site.Name, err)
 				continue
@@ -414,7 +455,7 @@ func checkProfile(ctx context.Context, profile string, s appconfig.Settings, p a
 				logger.Errorf("[%s] Cisco check failed for %s: %v", profile, site.Name, e)
 				continue
 			}
-			prev, ok := st.Cisco.Sites[site.URL]
+			prev, ok := comparison.Cisco.Sites[site.URL]
 			var pp *model.Snapshot
 			if ok {
 				pp = &prev
